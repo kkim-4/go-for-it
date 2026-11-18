@@ -4,15 +4,16 @@ CSE 150A/250A Final Project, Fall 2026 · Kevin Kim, Saketh Golla, Fiona Zou, Ra
 
 On fourth down, an NFL team can go for it, punt, or kick a field goal. We model each possession as a
 Markov Decision Process, estimate its transition probabilities from real play-by-play data by maximum
-likelihood, solve it with value iteration, and test whether model-free Q-learning learns the same
-fourth-down decisions. We then compare the optimal policy with what NFL coaches actually did.
+likelihood, solve it with value iteration, and compare that model-based approach with model-free
+Q-learning in terms of sample efficiency. We then compare the optimal policy with what NFL coaches
+actually did.
 
 ## Setup
 
 Requires Python 3.10 or newer.
 
 ```bash
-pip3 install nflreadpy polars pyarrow pandas numpy scikit-learn
+pip3 install nflreadpy polars pyarrow pandas numpy scipy scikit-learn matplotlib
 ```
 
 ## How to run
@@ -20,12 +21,16 @@ pip3 install nflreadpy polars pyarrow pandas numpy scikit-learn
 Run the scripts in order from the repo root:
 
 ```bash
-python3 export_data.py            # download and filter play-by-play -> data/
-python3 estimate_transitions.py   # estimate transition probabilities -> transitions/
+python3 export_data.py            # download and filter play-by-play     -> data/
+python3 estimate_transitions.py   # MLE transition probabilities         -> transitions/
+python3 value_iteration.py        # build the MDP and solve it           -> results/, figures/
 ```
 
-`export_data.py` takes optional flags: `--start 1999 --end 2024` to change seasons, `--parquet` to also
-write Parquet copies. The first run downloads about 1 minute of data.
+Options:
+- `export_data.py --start 1999 --end 2024` changes the seasons; `--parquet` also writes Parquet copies.
+  The first run downloads about 1 minute of data.
+- `value_iteration.py --gamma-poss 0.9` discounts the opponent's future value (an ablation). Each run
+  overwrites `results/` and `figures/`, so rerun the default afterwards.
 
 ## Files
 
@@ -33,6 +38,7 @@ write Parquet copies. The first run downloads about 1 minute of data.
 | --- | --- |
 | `export_data.py` | Downloads nflverse play-by-play, keeps the columns we need, filters to normal game situations |
 | `estimate_transitions.py` | MLE estimates of play outcomes, field-goal success, and punt outcomes |
+| `value_iteration.py` | Builds the MDP from the MLE tables, solves it with value iteration, checks it with policy iteration, validates against nflfastR expected points |
 
 ## Outputs
 
@@ -61,19 +67,36 @@ Filtering drops penalties, overtime, the last 2 minutes of each half, and games 
 3rd and 4th downs are pooled when estimating conversion rates, because real fourth-down attempts are
 rare and teams choose them selectively.
 
+**`results/` and `figures/`**
+
+| File | Contents |
+| --- | --- |
+| `results/values.csv` | V(s), the value of each action (go, punt, field goal), and the best action for every state |
+| `results/vi_convergence.csv` | Largest change in V per value-iteration sweep |
+| `figures/policy_heatmap.png` | Optimal 4th-down action by yards to go and field position |
+| `figures/value_vs_nflfastr.png` | Our value of 1st & 10 vs nflfastR's expected points |
+
 ## Model
 
-- **State:** (down, yards to go, yards from the opponent's end zone)
-- **Actions:** on 4th down, go for it, punt, or field goal; earlier downs run a play
-- **Reward:** points scored (+7 touchdown, +3 field goal, −2 safety); on a change of possession, the
-  opponent's expected points from their new field position are subtracted
+- **State:** (down, yards to go, yards from the opponent's end zone), 7,160 legal states
+- **Actions:** on 4th down, go for it, punt, or field goal (within 67 yards); earlier downs run a play
+- **Reward:** points scored (+7 touchdown, +3 field goal, −2 safety). On a change of possession, our value
+  is minus the opponent's value from their new state, so V(s) is expected net points.
+
+## Results so far
+
+- Value iteration converges in 87 sweeps; policy iteration finds the identical policy in 4 iterations.
+- 1st & 10 is worth +0.89 expected points at our own 25, +2.40 at midfield, and +4.03 at the
+  opponent's 25, within 0.27 points of nflfastR's model on average. Our values run high inside the
+  opponent's 30, likely because yards gained are pooled across the whole field.
+- Going for it is optimal in 48% of 4th-down situations with 10 or fewer yards to go.
 
 ## Roadmap
 
 - [x] Data export and filtering
 - [x] MLE transition estimates
-- [ ] MDP and value iteration (validate against nflfastR expected points)
-- [ ] Simulator and Q-learning
+- [x] MDP and value iteration (validated against nflfastR expected points)
+- [ ] Sample-efficiency comparison: model-based (MLE + value iteration) vs Q-learning on the same number of plays
 - [ ] Compare the optimal policy with coaches' decisions
 - [ ] Ablations and final report (due Nov 23)
 
