@@ -41,8 +41,6 @@ ALPHA = 0.1
 
 NUM_EPOCHS = 100
 
-
-
 # ------------------------------------------------------------------ loading cleaned data
 
 def load():
@@ -107,7 +105,7 @@ def get_action(row):
     return ACTIONS.index(action)
 
 
-def get_reward(sign, row):
+def get_reward(row):
     """
     Determines the immediate reward from a play. +7 if touchdown, +3 if field goal, -2 if safety, and 0 otherwise.
 
@@ -116,15 +114,15 @@ def get_reward(sign, row):
     """
 
     if(row["touchdown"]):
-        return sign*7.0
+        return 7.0
     if(row["field_goal_result"] == "made"):
-        return sign*3.0
+        return 3.0
     if(row["safety"]):
-        return sign*(-2.0)
+        return -2.0
     return 0.0
 
 
-def get_next_state(sign, row, next_row):
+def get_next_state(row, next_row):
     """
     Determine the next state after a play in the data given the two rows. Analogous to outcomes in valueiteration.py.
 
@@ -141,18 +139,20 @@ def get_next_state(sign, row, next_row):
     #     return (-1, get_state(next_row), get_reward(next_row))
 
     if(row["posteam"] != next_row["posteam"]):
-        return(-1*sign, get_state(next_row))
+        return(-1, get_state(next_row))
     
-    return(sign, get_state(next_row))
+    return(1, get_state(next_row))
 
 
 def extract_transitions(df):
     """
-    Get all signs (team that starts off with possession in each game has sign +1 and other team has sign -1) 
-    states, their corresponding actions, reward for going into the next state.
+    Extract states, actions, rewards, and transitions from play-by-play data.
 
     Returns list[tuple]:
-        Each tuple is (sign, state, action, reward, next state)
+        Each transition is (sign, state, action, reward, next state, For the next state: down, ydstogo, yardline100)
+    
+    sign = +1 if possession is retained after the play
+    sign = -1 if possession changes after the play
     """
 
     transitions = []
@@ -161,18 +161,28 @@ def extract_transitions(df):
 
     for game_id, game in df.groupby("game_id", sort=False):
         plays = game.to_dict("records")
-        sign = 1
 
         for i, row in enumerate(plays):
             end_state = (i == len(plays)-1) #this indicates whether the current state is terminal
             state = get_state(row)
             action = get_action(row)
-            reward = get_reward(sign, row)
+            reward = get_reward(row)
+            
 
             if not end_state:
-                next_row = plays[i+1]                    
+                if state is None:
+                    continue
+
+                next_row = plays[i+1]      
+                down = next_row["down"]
+                ydstogo = next_row["ydstogo"]
+                ydline = next_row["yardline_100"]              
                 #state = get_state(row)
-                next_state  = get_next_state(sign, row, next_row)
+                next_state  = get_next_state(row, next_row)
+
+                if next_state[1] is None:
+                    continue
+
                 #action = get_action(row)
                 
 
@@ -184,25 +194,94 @@ def extract_transitions(df):
                 #     continue
 
                 
-                if state is not None:
-                    transitions.append((sign, state, action, reward, next_state[1]))
-                    
-                sign = next_state[0]
                 
-                
+                transitions.append((next_state[0], state, action, reward, next_state[1], down, ydstogo, ydline))
             else:
-                transitions.append((sign, state, action, reward, None))
+                transitions.append((1, state, action, reward, None, None, None, None))
+
+    return transitions
 
 
 # ------------------------------------------------------------------ solvers
-def q_learning():
-    pass
+def q_learning(df, transitions, alpha=0.1, gamma=1.0, epochs=100, tol=1e-6):
+    """
+    Each game is treated as an episode of observations. We update the Q-value for each step in
+    the game (a play) until the game ends. We repeat for all games, for multiple epochs.
+
+    Returns ndarray(3,N_STATES):
+        Q
+    """
+    Q = np.zeros((3, N_STATES))
+
+    deltas = []
+
+    # for epoch in range(epochs):
+
+    #     #np.random.shuffle(transitions)
+    for epoch in range(epochs):
+        for i, play in enumerate(transitions):
+            sign = play[0]
+            state = play[1]
+            action = play[2] #Since we do not know transition probabilities, we fix the action to the historical action
+            new_state = play[4]
+            reward = play[3]
+
+            if(new_state is not None):
+                next_actions = legal_actions(
+                    int(play[5]),
+                    min(int(play[6]), MAX_TOGO),
+                    int(play[7])
+                )
+                delta = reward + sign*gamma*max(Q[a, new_state] for a in next_actions) - Q[action, state] #Only maximize Q for the next state for legal actions
+            else:
+                delta = reward - Q[action, state]
+
+            Q[action, state] = Q[action, state] + alpha*delta #Q learning update
+
+    return Q
+
 
 def get_values(Q):
-    pass
+    """
+    Get the state value function from the Q values passed as input.
+
+    Returns ndarray(N_STATES)
+        V
+    """
+
+    V = max(Q, axis=0)
+
+    V = np.zeros(N_STATES)
+
+    for down in range(1,5):
+        for togo in range(1, MAX_TOGO+1):
+            for yl in range(1,100):
+                state = idx(down,togo,yl)
+                actions = legal_actions(down,togo,yl)
+
+                if actions:
+                    V[state] = max(Q[a, state] for a in actions)
+
+    return V
 
 def get_policy(Q):
-    pass
+    """
+    Get the policy from the Q values passed as input.
+
+    Returns ndarray(N_STATES)
+        pi
+    """
+    pi = np.full(N_STATES, -1)
+
+    for down in range(1,5):
+        for togo in range(1, MAX_TOGO+1):
+            for yl in range(1,100):
+                state = idx(down,togo,yl)
+                actions = legal_actions(down,togo,yl)
+
+                if actions:
+                    pi[state] = max(actions, key=lambda a: Q[a, state])
+    return pi
 
 # ------------------------------------------------------------------ outputs
 
