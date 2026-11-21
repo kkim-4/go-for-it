@@ -74,6 +74,9 @@ def get_state(row):
         int: State index
     """
 
+    if(row["play_type"] == "kickoff"):
+        return KICKOFF
+    
     down = int(row["down"])
     togo = min(int(row["ydstogo"]), MAX_TOGO)
     yl = int(row["yardline_100"])
@@ -197,19 +200,21 @@ def extract_transitions(df):
                 
                 transitions.append((next_state[0], state, action, reward, next_state[1], down, ydstogo, ydline))
             else:
+                if state is None:
+                    continue
                 transitions.append((1, state, action, reward, None, None, None, None))
 
     return transitions
 
 
 # ------------------------------------------------------------------ solvers
-def q_learning(df, transitions, alpha=0.1, gamma=1.0, epochs=100, tol=1e-6):
+def q_learning(transitions, alpha=0.1, gamma=1.0, epochs=100, tol=1e-6):
     """
     Each game is treated as an episode of observations. We update the Q-value for each step in
     the game (a play) until the game ends. We repeat for all games, for multiple epochs.
 
-    Returns ndarray(3,N_STATES):
-        Q
+    Returns ndarray(3,N_STATES), list[float]:
+        Q, deltas
     """
     Q = np.zeros((3, N_STATES))
 
@@ -219,6 +224,8 @@ def q_learning(df, transitions, alpha=0.1, gamma=1.0, epochs=100, tol=1e-6):
 
     #     #np.random.shuffle(transitions)
     for epoch in range(epochs):
+        max_delta = 0.0
+        
         for i, play in enumerate(transitions):
             sign = play[0]
             state = play[1]
@@ -238,7 +245,12 @@ def q_learning(df, transitions, alpha=0.1, gamma=1.0, epochs=100, tol=1e-6):
 
             Q[action, state] = Q[action, state] + alpha*delta #Q learning update
 
-    return Q
+            max_delta = max(max_delta, abs(alpha*delta))
+
+        deltas.append(max_delta)
+        
+
+    return Q, deltas
 
 
 def get_values(Q):
@@ -248,8 +260,6 @@ def get_values(Q):
     Returns ndarray(N_STATES)
         V
     """
-
-    V = max(Q, axis=0)
 
     V = np.zeros(N_STATES)
 
@@ -285,17 +295,98 @@ def get_policy(Q):
 
 # ------------------------------------------------------------------ outputs
 
-def save_tables(Q, delta):
-    pass
+def save_tables(Q, deltas):
+    V = get_values(Q)
+    pi = get_policy(Q)
+    rows = []
+    for d in range (1,5):
+        for t in range(1, MAX_TOGO+1):
+            for y in range(1,100):
+                s = idx(d,t,y)
+                q=Q[:,s]
+                rows.append(dict(down=d, ydstogo=t, yard_line100=y, V=V[s], Q_go=q[PLAY], Q_punt=q[PUNT], Q_fg = q[FG], best = ACTIONS[pi[s]] if pi[s] != -1 else None))
+    
+    pd.DataFrame(rows).round(4).to_csv("results/q_learned_values.csv", index=False)
+    pd.DataFrame({"sweep": range(1, len(deltas) + 1), "max_change": deltas}).to_csv("results/ql_convergence.csv", index=False)
 
-def plot_value_vs_ep():
-    pass
+def plot_value_vs_ep(Q):
+    V = get_values(Q)
+    plays = pd.read_csv("data/plays_clean.csv", usecols=["down", "ydstogo", "yardline_100", "ep"])
+    ep = plays[(plays["down"] == 1) & (plays["ydstogo"] == 10)].groupby("yardline_100")["ep"].mean()
+    ys = np.arange(10, 100)
+    ours = np.array([V[first_down(y)] for y in ys])
+    gap = np.abs(ours - ep.reindex(ys).to_numpy())
+    fig, ax = plt.subplots(figsize=(6.5, 3.6))
+    ax.plot(ys, ours, color="#2a78d6", lw=2, label="Our Offline Q-learning")
+    ax.plot(ep.index, ep.values, color="#eb6834", lw=2, ls="--", label="nflfastR expected points")
+    ax.set_xlim(99, 10); ax.set_xlabel("Yards from opponent's end zone"); ax.set_ylabel("Expected points")
+    ax.set_title("Value of 1st & 10 by field position", loc="left")
+    ax.grid(axis="y", alpha=0.3); ax.legend(frameon=False)
+    for s in ("top", "right"): ax.spines[s].set_visible(False)
+    fig.tight_layout(); fig.savefig("figures/value_vs_nflfastr_ql.png", dpi=150); plt.close(fig)
+    return float(np.nanmean(gap))
 
-def plot_policy():
-    pass
+
+def plot_policy(Q):
+    pi = get_policy(Q)
+    grid = np.full((10, 99), np.nan)
+    for t in range(1, 11):
+        for y in range(t, 100):
+            # grid[t - 1, y - 1] = np.argmax(Q[:, idx(4, t, y)])
+            # state = idx(4, t, y)
+            # actions = legal_actions(4, t, y)
+
+            # if actions:
+            #     grid[t - 1, y - 1] = max(
+            #         actions,
+            #         key=lambda a: Q[a, state]
+            #     )
+
+            grid[t-1,y-1] = pi[idx(4,t,y)]
+
+    fig, ax = plt.subplots(figsize=(7.5, 3))
+    ax.imshow(grid, aspect="auto", origin="lower", extent=[0.5, 99.5, 0.5, 10.5],
+              cmap=ListedColormap(["#2a78d6", "#eb6834", "#1baf7a"]), vmin=-0.5, vmax=2.5,
+              interpolation="nearest")
+    ax.set_xlim(99.5, 0.5); ax.set_xlabel("Yards from opponent's end zone"); ax.set_ylabel("Yards to go")
+    ax.set_title("Optimal 4th-down decision (Q-learning)", loc="left")
+    handles = [plt.Rectangle((0, 0), 1, 1, color=c) for c in ["#2a78d6", "#eb6834", "#1baf7a"]]
+    ax.legend(handles, ["Go for it", "Punt", "Field goal"], ncol=3, frameon=False,
+              loc="upper center", bbox_to_anchor=(0.5, -0.25))
+    for s in ax.spines.values(): s.set_visible(False)
+    fig.tight_layout(); fig.savefig("figures/policy_heatmap_ql.png", dpi=150); plt.close(fig)
+    return float(np.nanmean(grid == PLAY))
 
 def main():
-    pass
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--gamma-poss", type=float, default=1.0,
+                    help="discount on the opponent's future value (1.0 = none)")
+    ap.add_argument("--alpha", type=float, default=0.1, 
+                    help="Q-learning step size (0.1 = none)")
+    ap.add_argument("--epochs", type=int, default=100,
+                    help="Number of epochs of training (100 = none)")
+    args = ap.parse_args()
+    os.makedirs("results", exist_ok=True); os.makedirs("figures", exist_ok=True)
+
+    plays_df = load()
+    transitions = extract_transitions(plays_df)
+    
+    Q, deltas = q_learning(transitions, args.alpha, args.gamma_poss, args.epochs)
+    V = get_values(Q)
+
+    save_tables(Q, deltas)
+
+    gap = plot_value_vs_ep(Q)
+    go_share = plot_policy(Q)
+
+    print(f"Q-learning:             completed training in {len(deltas)} epochs (max change {deltas[-1]:.1e})")
+    print(f"Mean gap vs nflfastR EP:     {gap:.2f} points (1st & 10, yardlines 10-99)")
+    spots = {99: "own 1", 75: "own 25", 50: "midfield", 25: "opp 25", 10: "opp 10"}
+    print("V(1st & 10):                 " + ", ".join(
+        f"{name} {V[first_down(y)]:+.2f}" for y, name in spots.items()))
+    print(f"4th-down states where go is optimal (togo <= 10): {go_share:.1%}")
+    print("Saved results/q_learned_values.csv, results/ql_convergence.csv, figures/*.png")
+
 
 if __name__ == "__main__":
     main()
