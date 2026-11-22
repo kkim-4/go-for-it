@@ -26,6 +26,7 @@ python3 estimate_transitions.py   # MLE transition probabilities         -> tran
 python3 value_iteration.py        # build the MDP and solve it           -> results/, figures/
 python3 q_learning.py             # offline Q-learning on the same plays -> results/, figures/
 python3 sample_efficiency.py      # MLE + VI vs Q-learning by data size  -> results/, figures/
+python3 q_learning_vs_coaches.py  # Q-learning policy vs real coach calls -> results/, figures/
 ```
 
 Options:
@@ -45,6 +46,7 @@ Options:
 | `value_iteration.py` | Builds the MDP from the MLE tables, solves it with value iteration, checks it with policy iteration, validates against nflfastR expected points |
 | `q_learning.py` | Offline Q-learning by replaying the real plays in order, game by game |
 | `sample_efficiency.py` | Runs both methods on random subsets of games (1k, 5k, 25k, 100k plays, and all) and compares them |
+| `q_learning_vs_coaches.py` | Looks up each real 4th-down decision in the Q-learning policy and measures how often it makes the coach's call |
 
 ## Outputs
 
@@ -84,6 +86,8 @@ rare and teams choose them selectively.
 | `results/sample_efficiency_runs.csv` | One row per method, data size, and seed: gap vs nflfastR, 4th-down policy agreement, go share, run time |
 | `results/sample_efficiency_summary.csv` | The same metrics averaged over seeds |
 | `figures/sample_efficiency.png` | Gap vs nflfastR and 4th-down policy agreement as the number of plays grows |
+| `results/ql_vs_coaches.csv` | Share of go, punt, and field goal for coaches and for Q-learning, and how often they agree: overall and by yards to go |
+| `figures/ql_vs_coaches.png` | Coaches' most common 4th-down action vs Q-learning's action, by yards to go and field position |
 
 ## Model
 
@@ -106,6 +110,10 @@ rare and teams choose them selectively.
   updates the action the coach actually chose, so actions coaches rarely took (most 4th-down "go"
   and many field goals) are never learned. Q-learning's small-data results are therefore mostly
   artifacts: at 1k plays it picks "go" in 97% of states.
+- **Q-learning vs coaches** (27,785 real 4th downs). Coaches go for it 13.8% of the time, punt 59.9%, and
+  kick 26.3%; Q-learning would go 66.0%, punt 12.0%, and kick 22.1%. It makes the coach's call in 39.2% of
+  decisions. In 66% of these states some action was never updated and keeps its initial Q of 0; where
+  every action was updated, agreement is 44.3%.
 
 ## Roadmap
 
