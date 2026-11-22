@@ -2,3 +2,4 @@ data/
 transitions/
 results/
 figures/
+__pycache__/

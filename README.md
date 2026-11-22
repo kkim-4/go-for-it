@@ -13,7 +13,7 @@ actually did.
 Requires Python 3.10 or newer.
 
 ```bash
-pip3 install nflreadpy polars pyarrow pandas numpy scipy scikit-learn matplotlib
+pip3 install nflreadpy polars pyarrow pandas numpy scipy scikit-learn matplotlib tqdm
 ```
 
 ## How to run
@@ -24,6 +24,8 @@ Run the scripts in order from the repo root:
 python3 export_data.py            # download and filter play-by-play     -> data/
 python3 estimate_transitions.py   # MLE transition probabilities         -> transitions/
 python3 value_iteration.py        # build the MDP and solve it           -> results/, figures/
+python3 q_learning.py             # offline Q-learning on the same plays -> results/, figures/
+python3 sample_efficiency.py      # MLE + VI vs Q-learning by data size  -> results/, figures/
 ```
 
 Options:
@@ -31,6 +33,8 @@ Options:
   The first run downloads about 1 minute of data.
 - `value_iteration.py --gamma-poss 0.9` discounts the opponent's future value (an ablation). Each run
   overwrites `results/` and `figures/`, so rerun the default afterwards.
+- `sample_efficiency.py` runs 26 fits in parallel (about 1 minute on a multi-core machine; the
+  all-plays Q-learning run is the slowest). `--plot-only` redraws the figure from the saved results.
 
 ## Files
 
@@ -39,6 +43,8 @@ Options:
 | `export_data.py` | Downloads nflverse play-by-play, keeps the columns we need, filters to normal game situations |
 | `estimate_transitions.py` | MLE estimates of play outcomes, field-goal success, and punt outcomes |
 | `value_iteration.py` | Builds the MDP from the MLE tables, solves it with value iteration, checks it with policy iteration, validates against nflfastR expected points |
+| `q_learning.py` | Offline Q-learning by replaying the real plays in order, game by game |
+| `sample_efficiency.py` | Runs both methods on random subsets of games (1k, 5k, 25k, 100k plays, and all) and compares them |
 
 ## Outputs
 
@@ -75,6 +81,9 @@ rare and teams choose them selectively.
 | `results/vi_convergence.csv` | Largest change in V per value-iteration sweep |
 | `figures/policy_heatmap.png` | Optimal 4th-down action by yards to go and field position |
 | `figures/value_vs_nflfastr.png` | Our value of 1st & 10 vs nflfastR's expected points |
+| `results/sample_efficiency_runs.csv` | One row per method, data size, and seed: gap vs nflfastR, 4th-down policy agreement, go share, run time |
+| `results/sample_efficiency_summary.csv` | The same metrics averaged over seeds |
+| `figures/sample_efficiency.png` | Gap vs nflfastR and 4th-down policy agreement as the number of plays grows |
 
 ## Model
 
@@ -90,13 +99,20 @@ rare and teams choose them selectively.
   opponent's 25, within 0.27 points of nflfastR's model on average. Our values run high inside the
   opponent's 30, likely because yards gained are pooled across the whole field.
 - Going for it is optimal in 48% of 4th-down situations with 10 or fewer yards to go.
+- **Sample efficiency.** MLE + value iteration is within about 0.25 points of nflfastR from just 1,000
+  plays, and its 4th-down policy matches the full-data policy in 83% of states at 1k plays and 98% at
+  100k. Offline Q-learning levels off at about 0.65 points from nflfastR by 5k plays and matches the
+  value-iteration policy in only about 50% of 4th-down states at every data size. Q-learning only
+  updates the action the coach actually chose, so actions coaches rarely took (most 4th-down "go"
+  and many field goals) are never learned. Q-learning's small-data results are therefore mostly
+  artifacts: at 1k plays it picks "go" in 97% of states.
 
 ## Roadmap
 
 - [x] Data export and filtering
 - [x] MLE transition estimates
 - [x] MDP and value iteration (validated against nflfastR expected points)
-- [ ] Sample-efficiency comparison: model-based (MLE + value iteration) vs Q-learning on the same number of plays
+- [x] Sample-efficiency comparison: model-based (MLE + value iteration) vs Q-learning on the same number of plays
 - [ ] Compare the optimal policy with coaches' decisions
 - [ ] Ablations and final report (due Nov 23)
 
