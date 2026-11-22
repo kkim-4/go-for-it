@@ -14,6 +14,9 @@ Metrics, on 4th-down states with yards to go <= 10 (945 states):
   agree_self  share matching the same method's own full-data policy
   ep_gap      mean |V(1st & 10) - nflfastR EP| over yardlines 10-99 (EP from all plays)
   go_share    share of states where "go" is chosen
+  coverage    share of states where the method has enough data to choose any action
+              (always 100% for MLE + VI, which pools data across states; Q-learning only
+              decides where the data contains at least one of the legal actions)
 
 Reads   data/plays_clean.csv
 Writes  results/sample_efficiency_runs.csv     one row per method x budget x seed
@@ -131,8 +134,9 @@ def run_experiment():
                              plays=r["plays"],
                              ep_gap=float(np.nanmean(np.abs(r["V1"] - ep))),
                              agree_ref=float((r["pi4"] == ref["MLE + VI"]).mean()),
-                             agree_self=float((r["pi4"] == ref[r["method"]]).mean()),
+                             agree_self=float(((r["pi4"] == ref[r["method"]]) & (r["pi4"] >= 0)).mean()),
                              go_share=float((r["pi4"] == vi.PLAY).mean()),
+                             coverage=float((r["pi4"] >= 0).mean()),
                              secs=r["secs"]) for r in results])
     order = {b: i for i, b in enumerate([1000, 5000, 25000, 100000, "all"])}
     raw = raw.sort_values(["method", "budget", "seed"],
@@ -145,7 +149,8 @@ def summarize(raw):
     summ = (raw.groupby(["method", "budget"], sort=False)
             .agg(plays=("plays", "mean"), ep_gap=("ep_gap", "mean"), ep_gap_sd=("ep_gap", "std"),
                  agree_ref=("agree_ref", "mean"), agree_self=("agree_self", "mean"),
-                 go_share=("go_share", "mean"), secs=("secs", "mean"))
+                 go_share=("go_share", "mean"), coverage=("coverage", "mean"),
+                 secs=("secs", "mean"))
             .reset_index())
     summ.round(4).to_csv(SUMMARY, index=False)
     return summ
@@ -163,12 +168,10 @@ def plot(raw):
             ax.fill_between(g["x"], g["lo"], g["hi"], color=COLORS[m], alpha=0.15, lw=0)
             ax.plot(g["x"], g["mean"], color=COLORS[m], lw=2, marker="o", ms=6,
                     markeredgecolor="white", markeredgewidth=1.5, label=m)
-            ax.annotate(m, (g["x"].iloc[-1], g["mean"].iloc[-1]), xytext=(8, 0),
-                        textcoords="offset points", va="center", fontsize=9, color="#3d3d3a")
         ax.set_xscale("log")
         ax.set_xticks([1e3, 5e3, 2.5e4, 1e5, 283613])
         ax.set_xticklabels(["1k", "5k", "25k", "100k", "all\n(284k)"])
-        ax.set_xlim(800, 1.2e6)
+        ax.set_xlim(800, 4e5)
         ax.minorticks_off()
         if ylim:
             ax.set_ylim(*ylim)
@@ -181,11 +184,12 @@ def plot(raw):
         ax.grid(axis="y", alpha=0.3)
         for s in ("top", "right"):
             ax.spines[s].set_visible(False)
-    axes[0].legend(frameon=False, loc="upper right")
-    fig.text(0.01, 0.01, "Lines: mean of 3 seeds (1 run at all plays). Bands: min-max across seeds. "
-             "Policy agreement over 945 4th-down states with yards to go <= 10.",
+    axes[1].legend(frameon=False, loc="lower right")
+    fig.text(0.01, 0.01, "Lines: mean of 3 seeds (1 run at all plays). Bands: min-max across seeds.\n"
+             "Policy agreement over 945 4th-down states with yards to go <= 10; "
+             "states where Q-learning has no data count as disagreement.",
              fontsize=8, color="#6b6a65")
-    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.tight_layout(rect=(0, 0.07, 1, 1))
     fig.savefig(FIG, dpi=150)
     plt.close(fig)
 

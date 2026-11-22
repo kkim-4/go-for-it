@@ -21,7 +21,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.colors import ListedColormap
-from tqdm import tqdm
 
 
 DATA = "data/plays_clean.csv"
@@ -117,7 +116,12 @@ def get_reward(row):
     """
 
     if(row["touchdown"]):
-        return 7.0
+        # who scored? (checked against nflfastR's td_team: exact on all 10,272 TDs in 2015-2024)
+        if row["action"] == "field_goal":                 # blocked/missed kick returned for a TD
+            return -7.0
+        if row["action"] == "punt":                       # return TD, unless the receiving team
+            return 7.0 if row["turnover"] == 1 else -7.0  # muffed it and the punting team scored
+        return -7.0 if row["turnover"] == 1 else 7.0      # interception/fumble return TD
     if(row["field_goal_result"] == "made"):
         return 3.0
     if(row["safety"]):
@@ -186,6 +190,16 @@ def extract_transitions(df):
                 if next_state[1] is None:
                     continue
 
+                # skip halftime: the next row starts a new half, not a result of this play
+                if row["qtr"] == 2 and next_row["qtr"] == 3:
+                    continue
+
+                # skip gaps left by filtering (e.g. a dropped penalty play): same possession, but the
+                # next play does not start where this run/pass ended
+                if next_state[0] == 1 and row["action"] == "go" and not row["touchdown"]:
+                    if abs((row["yardline_100"] - row["yards_gained"]) - next_row["yardline_100"]) > 0.5:
+                        continue
+
                 #action = get_action(row)
                 
 
@@ -209,7 +223,8 @@ def extract_transitions(df):
 
 # ------------------------------------------------------------------ solvers
 def q_learning(transitions, alpha=0.1, gamma=1.0, epochs=100, tol=1e-6):
-    """
+    """gamma discounts the opponent's future value only (same meaning as --gamma-poss in value_iteration.py).
+
     Each game is treated as an episode of observations. We update the Q-value for each step in
     the game (a play) until the game ends. We repeat for all games, for multiple epochs.
 
@@ -217,6 +232,13 @@ def q_learning(transitions, alpha=0.1, gamma=1.0, epochs=100, tol=1e-6):
         Q, deltas
     """
     Q = np.zeros((3, N_STATES))
+
+    # Offline data only contains the actions coaches took. A (state, action) pair that never
+    # appears keeps its initial Q = 0, which would look better than any negative value
+    # (e.g. punting from your own 20). So we only ever compare actions that were observed.
+    seen = np.zeros((3, N_STATES), dtype=bool)
+    for play in transitions:
+        seen[play[2], play[1]] = True
 
     deltas = []
 
@@ -234,12 +256,14 @@ def q_learning(transitions, alpha=0.1, gamma=1.0, epochs=100, tol=1e-6):
             reward = play[3]
 
             if(new_state is not None):
-                next_actions = legal_actions(
+                next_actions = [a for a in legal_actions(
                     int(play[5]),
                     min(int(play[6]), MAX_TOGO),
                     int(play[7])
-                )
-                delta = reward + sign*gamma*max(Q[a, new_state] for a in next_actions) - Q[action, state] #Only maximize Q for the next state for legal actions
+                ) if seen[a, new_state]]                      # legal AND observed
+                next_value = max(Q[a, new_state] for a in next_actions) if next_actions else 0.0
+                disc = gamma if sign < 0 else 1.0           # discount only the opponent's future, as in value_iteration
+                delta = reward + sign*disc*next_value - Q[action, state]
             else:
                 delta = reward - Q[action, state]
 
@@ -248,8 +272,8 @@ def q_learning(transitions, alpha=0.1, gamma=1.0, epochs=100, tol=1e-6):
             max_delta = max(max_delta, abs(alpha*delta))
 
         deltas.append(max_delta)
-        
 
+    Q[~seen] = np.nan        # never observed: no estimate
     return Q, deltas
 
 
@@ -269,8 +293,8 @@ def get_values(Q):
                 state = idx(down,togo,yl)
                 actions = legal_actions(down,togo,yl)
 
-                if actions:
-                    V[state] = max(Q[a, state] for a in actions)
+                actions = [a for a in actions if np.isfinite(Q[a, state])]
+                V[state] = max(Q[a, state] for a in actions) if actions else np.nan
 
     return V
 
@@ -289,8 +313,9 @@ def get_policy(Q):
                 state = idx(down,togo,yl)
                 actions = legal_actions(down,togo,yl)
 
+                actions = [a for a in actions if np.isfinite(Q[a, state])]
                 if actions:
-                    pi[state] = max(actions, key=lambda a: Q[a, state])
+                    pi[state] = max(actions, key=lambda a: Q[a, state])   # -1 = no data
     return pi
 
 # ------------------------------------------------------------------ outputs
@@ -342,7 +367,8 @@ def plot_policy(Q):
             #         key=lambda a: Q[a, state]
             #     )
 
-            grid[t-1,y-1] = pi[idx(4,t,y)]
+            p = pi[idx(4,t,y)]
+            grid[t-1,y-1] = p if p >= 0 else np.nan    # blank where there is no data
 
     fig, ax = plt.subplots(figsize=(7.5, 3))
     ax.imshow(grid, aspect="auto", origin="lower", extent=[0.5, 99.5, 0.5, 10.5],
@@ -355,7 +381,7 @@ def plot_policy(Q):
               loc="upper center", bbox_to_anchor=(0.5, -0.25))
     for s in ax.spines.values(): s.set_visible(False)
     fig.tight_layout(); fig.savefig("figures/policy_heatmap_ql.png", dpi=150); plt.close(fig)
-    return float(np.nanmean(grid == PLAY))
+    return float(np.mean(grid[~np.isnan(grid)] == PLAY))   # share of 4th-down states with data
 
 def main():
     ap = argparse.ArgumentParser()

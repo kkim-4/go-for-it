@@ -241,7 +241,7 @@ def plot_policy(Q):
               loc="upper center", bbox_to_anchor=(0.5, -0.25))
     for s in ax.spines.values(): s.set_visible(False)
     fig.tight_layout(); fig.savefig("figures/policy_heatmap.png", dpi=150); plt.close(fig)
-    return float(np.nanmean(grid == PLAY))
+    return float(np.mean(grid[~np.isnan(grid)] == PLAY))   # share of legal 4th-down states
 
 
 def main():
