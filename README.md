@@ -26,6 +26,7 @@ python3 estimate_transitions.py   # MLE transition probabilities         -> tran
 python3 value_iteration.py        # build the MDP and solve it           -> results/, figures/
 python3 q_learning.py             # offline Q-learning on real plays     -> results/, figures/
 python3 q_learning_vs_coaches.py  # compare both policies with coaches   -> results/, figures/
+python3 compare_coaches.py        # team-level efficiency and agreement heatmap -> results/, figures/
 python3 sample_efficiency.py      # model-based vs Q-learning by data size (~2 min)
 ```
 
@@ -44,6 +45,7 @@ Options:
 | `value_iteration.py` | Builds the MDP from the MLE tables, solves it with value iteration, checks it with policy iteration, validates against nflfastR expected points |
 | `q_learning.py` | Offline Q-learning on real play sequences, without the MLE tables; only compares actions that appear in the data |
 | `q_learning_vs_coaches.py` | Compares coaches' real 4th-down calls with the value-iteration and Q-learning policies: agreement, expected points lost, go rate by season |
+| `compare_coaches.py` | Ranks all 32 NFL teams by mean expected points lost on 4th down and plots a state-by-state coach agreement heatmap |
 | `sample_efficiency.py` | Gives both methods the same random subsets of games (1k to all plays) and measures how close each gets to the full-data optimal policy |
 
 ## Outputs
@@ -81,6 +83,9 @@ rare and teams choose them selectively.
 | `results/vi_convergence.csv` | Largest change in V per value-iteration sweep |
 | `figures/policy_heatmap.png` | Optimal 4th-down action by yards to go and field position |
 | `figures/value_vs_nflfastr.png` | Our value of 1st & 10 vs nflfastR's expected points |
+| `results/coach_by_team.csv` | Team-by-team 4th-down agreement rate, go-for-it rate, and mean/total EP lost |
+| `figures/coach_team_rankings.png` | All 32 NFL teams ranked by mean expected points lost per 4th down |
+| `figures/coach_agreement_heatmap.png` | Coach-MDP agreement rate by yards to go and field position (cells with n >= 3) |
 
 ## Model
 
